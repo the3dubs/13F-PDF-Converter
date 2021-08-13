@@ -8,6 +8,7 @@ Input: 13F PDF file from SEC website https://www.sec.gov/divisions/investment/13
 Output: 13F list in Excel format with some limitations
 
 Limitations:
+1) Some rows don't have the split between Description and Issue columns
 
 when I used tika lib to convert PDF to raw string, the table structure was lost.
 So I had to split issuer name and issue description column (combined and called "description"
@@ -15,8 +16,17 @@ in the following code explanation) using some identifiers (called "starter" and 
 Since the issuer name content has some cut-off names due to limited column width, using my
 identifiers cannot 100% separate issuer name and issuer description. For the rows still with
 combined issuer description, there is a note "See description column for issue type" in Issue
-column of the final output Excel file. Out of Q2 2021 13F list, only 208 rows out of total
-21312 rows have this limitation.
+column of the final output Excel file. Out of Q2 2021 13F list, only 278 rows out of total
+21312 rows(1.3%) have this limitation.
+
+2) Incorrect split between issuer name description and issue security name description
+
+There were some rare situations that the issuer name (in Description column) and issue
+(in Issue column) were split incorrectly. The common reason is that the issued security starts
+with an uncommon word which were not included in the issue starter word list under check_starter
+help function (below) or the issuer's name ends with an uncommon word which were not included in
+the issuer end word list under check_end help function (below). But the occurrences represent less
+than 1% of the total population.
 
 This output Excel file is not perfect, but it is good enough for my work process. If you have
 any improvement idea, please let me know on GitHub. Happy to discuss and make it perfect.
@@ -185,28 +195,38 @@ Output: final_table: the final list containing all rows in lists (CUSIP, *, desc
 
 # Helper of the help function to check if the common words of issue in all_table's description string
 def starter_check(des):
-    # summarize common words at the beginning of issue column content
-    starters = ["SHS", "CALL", "PUT", "DEBT", "COM", "NAMEN", "CL ", "CLASS", "*W", "UNIT", "ORD", "ORDINARY", "RIGHT",
-                "SPONSORED", "NOTE", "ADS", "ADR"]
+    # summarize common words at the beginning of issue column content (THE ORDER IN THIS LIST MATTER)
+    starters = ["CALL", "PUT", "DEBT", "NAMEN", "*W", "ORDINARY", "RIGHT", "WBI",
+                "NOTE", "USD ORD", "ORD SHS", "ORD SH", "USD MFC", "REG SHS", "SPONS ADR", "SPONS ADS", "SPON ADR",
+                "SPON ADS", "SPONS ADS", "SPONSORD ADS", "SPONSORED", "SPONDS", "PHYSCL", "PRTNRSP", "PARTNERSHP",
+                "SHS CL", "COM CL", "COM CLASS", " ORD","COM STK", "COM UNIT", "CL A", "USD ORD", "ORD SH", "SHS CLASS",
+                "UNIT COM", "ADR", "ADS", "COM", "UNIT", "ORD", "SHS", "CLASS", "S&P"]
 
     # iterate through starters list and return a list of:
     # 1) True/False (if the des contains any starter word);
     # 2) if True for 1), return the actual starter word in string, otherwise, return None.
+
     for starter in starters:
-        if starter in des:
+        if " "+starter in des:
             return [True, starter]
     return [False, None]
 
 # Helper of the help function to check if the common words of description in all_table's description string
 # Note: all_table's description (as the input) contains both description and issue columns' content
 def end_check(des):
-    # summarize common words at the end of description column content
-    ends = [" TR", " INC", " CORP", " FDS", " PLC", " HLDGS", " FD"]
+    # summarize common words at the end of description column content (THE ORDER IN THIS LIST MATTER)
+    ends = ["CORP N", "CORP NEW", "INC N", "INC NEW", "PLC", "LTD", "INC", "CORP", "HLDGS I", "HLDGS II", "HLDGS III",
+            "HLDGS", "FD TR", "ETF TR", "BRH", "L P", " LP", "S A", "TR I", "TR II", "TR III", "FD I", "FD II",
+            "FD III", "ETF TR", "FD T", "TRADED FD", "FD I", "FD II", "FD III", "TR", "FDS", "FD", "TRUST"]
     # iterate through ends list and return a list of:
     # 1) True/False (if the des contains any end word);
     # 2) if True for 1), return the actual end word in string, otherwise, return None.
+
+    reverse_des = des[::-1]
+
     for end in ends:
-        if end in des:
+        reverse_end = end[::-1]
+        if " "+reverse_end+" " in reverse_des:
             return [True, end.strip()]
     return [False, None]
 
@@ -216,28 +236,29 @@ def split_table(all_table):
 
     for row in all_table:
         des = row[2] # locate all_table's description string currently stored in each list (or called row here)
-        if starter_check(des)[0]: # if the des string contain any starter word
+        if starter_check(des)[0]:  # if the des string contain any starter word
             # locate the start index of starter in the des string
-            starter_start_index = des.find(starter_check(des)[1])
+            starter_start_index = des.rfind(starter_check(des)[1])
             # find the issue string and description string from des string based on the starter_start_index above
             issue = des[starter_start_index:].strip()
-            description = des[:starter_start_index-1].strip()
+            description = des[:starter_start_index - 1].strip()
             # insert the issue string to row (the row list)
-            row.insert(3,issue)
+            row.insert(3, issue)
             # replace description with the true description in the row (the row list)
             row[2] = description
 
-        elif end_check(des)[0]: # if the des string contain any end word
+        elif end_check(des)[0]:  # if the des string contain any end word
             # locate the start index of end in the des string
             end = end_check(des)[1]
-            end_start_index = des.find(end)
+            end_start_index = des.rfind(end+" ") # find the last occurrence index
             # find the issue string and description string from des string based on the end_start_index above
-            issue = des[end_start_index+len(end):].strip()
-            description = des[:end_start_index+len(end)].strip()
+            issue = des[end_start_index + len(end):].strip()
+            description = des[:end_start_index + len(end)].strip()
             # insert the issue string to row (the row list)
-            row.insert(3,issue)
+            row.insert(3, issue)
             # replace description with the true description in the row (the row list)
             row[2] = description
+
         else: # if no starter or end word is found, add a note to Issue column to ask the user
             # find issue type from description column manually
             note = "See description column for issue type"
